@@ -18,9 +18,9 @@
 package main
 
 import (
+	"github.com/empirefox/ffgen/generator"
+	_ "github.com/empirefox/ffgen/inception"
 	_ "github.com/pquerna/ffjson/fflib/v1"
-	"github.com/pquerna/ffjson/generator"
-	_ "github.com/pquerna/ffjson/inception"
 
 	"flag"
 	"fmt"
@@ -29,9 +29,9 @@ import (
 	"regexp"
 )
 
-var outputPathFlag      = flag.String("w", "", "Write generate code to this path instead of ${input}_ffjson.go.")
-var goCmdFlag           = flag.String("go-cmd", "", "Path to go command; Useful for `goapp` support.")
-var importNameFlag      = flag.String("import-name", "", "Override import name in case it cannot be detected.")
+var outputPathFlag = flag.String("w", "", "Write generate code to this path instead of ${input}_ffjson.go.")
+var goCmdFlag = flag.String("go-cmd", "", "Path to go command; Useful for `goapp` support.")
+var importNameFlag = flag.String("import-name", "", "Override import name in case it cannot be detected.")
 var forceRegenerateFlag = flag.Bool("force-regenerate", false, "Regenerate every input file, without checking modification date.")
 
 func usage() {

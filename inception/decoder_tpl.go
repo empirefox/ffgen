@@ -61,9 +61,11 @@ func init() {
 type handlerNumeric struct {
 	IC        *Inception
 	Name      string
+	Field     string
 	ParseFunc string
 	Typ       reflect.Type
 	TakeAddr  bool
+	ValTarget string
 }
 
 var handlerNumericTxt = `
@@ -71,6 +73,9 @@ var handlerNumericTxt = `
 	{{$ic := .IC}}
 
 	if tok == fflib.FFTok_null {
+		if err := pv.ValidateField("{{.Field}}", nil); err != nil {
+			return err
+		}
 		{{if eq .TakeAddr true}}
 		{{.Name}} = nil
 		{{end}}
@@ -84,6 +89,11 @@ var handlerNumericTxt = `
 		if err != nil {
 			return fs.WrapErr(err)
 		}
+
+		if err := pv.ValidateField("{{.Field}}", {{.ValTarget}}); err != nil {
+			return err
+		}
+
 		{{if eq .TakeAddr true}}
 		ttypval := {{getType $ic .Name .Typ}}(tval)
 		{{.Name}} = &ttypval
@@ -108,9 +118,10 @@ var allowTokensTxt = `
 `
 
 type handleFallback struct {
-	Name string
-	Typ  reflect.Type
-	Kind reflect.Kind
+	Name  string
+	Field string
+	Typ   reflect.Type
+	Kind  reflect.Kind
 }
 
 var handleFallbackTxt = `
@@ -131,6 +142,7 @@ var handleFallbackTxt = `
 type handleString struct {
 	IC       *Inception
 	Name     string
+	Field    string
 	Typ      reflect.Type
 	TakeAddr bool
 	Quoted   bool
@@ -142,10 +154,18 @@ var handleStringTxt = `
 
 	{{getAllowTokens .Typ.Name "FFTok_string" "FFTok_null"}}
 	if tok == fflib.FFTok_null {
+		if err := pv.ValidateField("{{.Field}}", nil); err != nil {
+			return err
+		}
 	{{if eq .TakeAddr true}}
 		{{.Name}} = nil
 	{{end}}
 	} else {
+
+	if err := pv.ValidateField("{{.Field}}", fs.Output.Bytes()); err != nil {
+		return err
+	}
+
 	{{if eq .TakeAddr true}}
 		var tval {{getType $ic .Name .Typ}}
 		outBuf := fs.Output.Bytes()
@@ -414,6 +434,7 @@ var handleByteSliceTxt = `
 
 type handleBool struct {
 	Name     string
+	Field    string
 	Typ      reflect.Type
 	TakeAddr bool
 }
@@ -421,6 +442,9 @@ type handleBool struct {
 var handleBoolTxt = `
 {
 	if tok == fflib.FFTok_null {
+		if err := pv.ValidateField("{{.Field}}", nil); err != nil {
+			return err
+		}
 		{{if eq .TakeAddr true}}
 		{{.Name}} = nil
 		{{end}}
@@ -446,6 +470,10 @@ var handleBoolTxt = `
 		} else {
 			err = errors.New("unexpected bytes for true/false value")
 			return fs.WrapErr(err)
+		}
+
+		if err := pv.ValidateField("{{.Field}}", {{if eq .TakeAddr true}}tval{{else}}{{.Name}}{{end}}); err != nil {
+			return err
 		}
 
 		{{if eq .TakeAddr true}}
@@ -516,17 +544,45 @@ var ujFuncTxt = `
 {{$si := .SI}}
 {{$ic := .IC}}
 
-func (uj *{{.SI.Name}}) UnmarshalJSON(input []byte) error {
+func (uj *{{.SI.Name}}) UnmarshalPermittedJSON(input []byte, getter ffgen.PermitterValidatorGetter, unmarshaled *ffgen.Unmarshaled) error {
 	fs := fflib.NewFFLexer(input)
-    return uj.UnmarshalJSONFFLexer(fs, fflib.FFParse_map_start)
+	return uj.UnmarshalPermittedJSONLexer(getter, unmarshaled, fs, fflib.FFParse_map_start)
 }
 
-func (uj *{{.SI.Name}}) UnmarshalJSONFFLexer(fs *fflib.FFLexer, state fflib.FFParseState) error {
+func (uj *{{.SI.Name}}) UnmarshalPermittedJSONLexer(getter ffgen.PermitterValidatorGetter, unmarshaled *ffgen.Unmarshaled, fs *fflib.FFLexer, state fflib.FFParseState) error {
+	// TODO add this
+	pv, ok := getter.GetPermitterValidator(reflect.TypeOf(uj))
+	if !ok || !pv.HasPermitted() {
+		return fmt.Errorf("Not permitted fields")
+	}
+
 	var err error = nil
 	currentKey := ffj_t_{{.SI.Name}}base
 	_ = currentKey
 	tok := fflib.FFTok_init
 	wantedTok := fflib.FFTok_init
+
+	// TODO
+	validated := map[*[]byte]bool{
+{{with $si := .SI}}
+	{{range $index, $field := $si.Fields}}
+		{{if ne $field.JsonName "-"}}
+		&ffj_key_{{$si.Name}}_{{$field.Name}} : false,
+		{{end}}
+	{{end}}
+{{end}}
+	}
+	defer func() {
+		if err == nil {
+			for k, ved := range validated {
+				if !ved && pv.IsPermitted(string(*k)) {
+					if err = pv.ValidateField(string(*k), nil); err != nil {
+						return
+					}
+				}
+			}
+		}
+	}()
 
 mainparse:
 	for {
@@ -609,7 +665,11 @@ mainparse:
 				switch currentKey {
 				{{range $index, $field := $si.Fields}}
 				case ffj_t_{{$si.Name}}_{{$field.Name}}:
-					goto handle_{{$field.Name}}
+					if pv.IsPermitted("{{$field.Name}}") {
+						goto handle_{{$field.Name}}
+					}
+					state = fflib.FFParse_after_value
+					goto mainparse
 				{{end}}
 				case ffj_t_{{$si.Name}}no_such_key:
 					err = fs.SkipField(tok)
@@ -629,6 +689,8 @@ mainparse:
 handle_{{$field.Name}}:
 	{{with $fieldName := $field.Name | printf "uj.%s"}}
 		{{handleField $ic $fieldName $field.Typ $field.Pointer $field.ForceString}}
+		unmarshaled.Set("{{$field.Name}}", {{$fieldName}})
+		validated[&ffj_key_{{$si.Name}}_{{$field.Name}}] = true
 		state = fflib.FFParse_after_value
 		goto mainparse
 	{{end}}
@@ -656,6 +718,8 @@ done:
 type handleUnmarshaler struct {
 	IC                   *Inception
 	Name                 string
+	Field                string
+	HasValidate          bool
 	Typ                  reflect.Type
 	Ptr                  reflect.Kind
 	TakeAddr             bool
@@ -669,6 +733,11 @@ var handleUnmarshalerTxt = `
 	{{if eq .UnmarshalJSONFFLexer true}}
 	{
 		if tok == fflib.FFTok_null {
+			{{if .HasValidate}}
+			if err := pv.ValidateField("{{.Field}}", nil); err != nil {
+				return err
+			}
+			{{end}}
 				{{if eq .Typ.Kind .Ptr }}
 					{{.Name}} = nil
 				{{end}}
@@ -688,16 +757,29 @@ var handleUnmarshalerTxt = `
 				{{.Name}} = new({{getType $ic .Typ.Name .Typ}})
 			}
 		{{end}}
-		err = {{.Name}}.UnmarshalJSONFFLexer(fs, fflib.FFParse_want_key)
+		// TODO use child unmarshaled
+		err = {{.Name}}.UnmarshalPermittedJSONLexer(getter, nil, fs, fflib.FFParse_want_key)
 		if err != nil {
 			return err
 		}
+
+		{{if .HasValidate}}
+		if err := pv.ValidateField("{{.Field}}", {{if eq .TakeAddr false}}&{{end}}{{.Name}}); err != nil {
+			return err
+		}
+		{{end}}
+
 		state = fflib.FFParse_after_value
 	}
 	{{else}}
 	{{if eq .Unmarshaler true}}
 	{
 		if tok == fflib.FFTok_null {
+			{{if .HasValidate}}
+			if err := pv.ValidateField("{{.Field}}", nil); err != nil {
+				return err
+			}
+			{{end}}
 			{{if eq .TakeAddr true }}
 				{{.Name}} = nil
 			{{end}}
@@ -719,6 +801,13 @@ var handleUnmarshalerTxt = `
 		if err != nil {
 			return fs.WrapErr(err)
 		}
+
+		{{if .HasValidate}}
+		if err := pv.ValidateField("{{.Field}}", {{if eq .TakeAddr false}}&{{end}}{{.Name}}); err != nil {
+			return err
+		}
+		{{end}}
+
 		state = fflib.FFParse_after_value
 	}
 	{{end}}

@@ -20,11 +20,12 @@ package ffjsoninception
 import (
 	"errors"
 	"fmt"
-	"github.com/pquerna/ffjson/shared"
 	"io/ioutil"
 	"os"
 	"reflect"
 	"sort"
+
+	"github.com/pquerna/ffjson/shared"
 )
 
 type Inception struct {
@@ -102,6 +103,9 @@ func (i *Inception) generateCode() error {
 
 	for _, si := range sorted {
 		if i.wantMarshal(si) {
+			// TODO add this
+			i.OutputImports[`"github.com/empirefox/ffgen/ffgen"`] = true
+			i.OutputImports[`"reflect"`] = true
 			err := CreateMarshalJSON(i, si)
 			if err != nil {
 				return err
@@ -109,6 +113,9 @@ func (i *Inception) generateCode() error {
 		}
 
 		if i.wantUnmarshal(si) {
+			// TODO add this
+			i.OutputImports[`"github.com/empirefox/ffgen/ffgen"`] = true
+			i.OutputImports[`"reflect"`] = true
 			err := CreateUnmarshalJSON(i, si)
 			if err != nil {
 				return err

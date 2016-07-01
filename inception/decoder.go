@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/pquerna/ffjson/shared"
 )
@@ -71,9 +72,17 @@ func handleFieldAddr(ic *Inception, name string, takeAddr bool, typ reflect.Type
 
 	umlstd := typ.Implements(unmarshalerType) || reflect.PtrTo(typ).Implements(unmarshalerType)
 
+	hasValidate := false
+	switch typ {
+	case reflect.TypeOf(time.Time{}):
+		hasValidate = true
+	}
+
 	out += tplStr(decodeTpl["handleUnmarshaler"], handleUnmarshaler{
 		IC:                   ic,
 		Name:                 name,
+		Field:                getFieldName(name),
+		HasValidate:          hasValidate,
 		Typ:                  typ,
 		Ptr:                  reflect.Ptr,
 		TakeAddr:             takeAddr || ptr,
@@ -126,6 +135,7 @@ func handleFieldAddr(ic *Inception, name string, takeAddr bool, typ reflect.Type
 
 		out += tplStr(decodeTpl["handleBool"], handleBool{
 			Name:     name,
+			Field:    getFieldName(name),
 			Typ:      typ,
 			TakeAddr: takeAddr || ptr,
 		})
@@ -157,6 +167,7 @@ func handleFieldAddr(ic *Inception, name string, takeAddr bool, typ reflect.Type
 			out += tplStr(decodeTpl["handleString"], handleString{
 				IC:       ic,
 				Name:     name,
+				Field:    getFieldName(name),
 				Typ:      typ,
 				TakeAddr: takeAddr || ptr,
 				Quoted:   quoted,
@@ -250,13 +261,24 @@ func getAllowTokens(name string, tokens ...string) string {
 }
 
 func getNumberHandler(ic *Inception, name string, takeAddr bool, typ reflect.Type, parsefunc string) string {
+	valiTarget := "tval"
+	if parsefunc == "ParseFloat" {
+		valiTarget = "fs.Output.Bytes()"
+	}
 	return tplStr(decodeTpl["handlerNumeric"], handlerNumeric{
 		IC:        ic,
 		Name:      name,
+		Field:     getFieldName(name),
 		ParseFunc: parsefunc,
 		TakeAddr:  takeAddr,
 		Typ:       typ,
+		ValTarget: valiTarget,
 	})
+}
+
+func getFieldName(name string) string {
+	s := strings.Split(name, ".")
+	return s[len(s)-1]
 }
 
 func getNumberSize(typ reflect.Type) string {

@@ -40,7 +40,7 @@ const inceptionMainTemplate = `
 package main
 
 import (
-	"github.com/pquerna/ffjson/inception"
+	"github.com/empirefox/ffgen/inception"
 	importedinceptionpackage "{{.ImportName}}"
 )
 

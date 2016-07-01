@@ -18,6 +18,7 @@
 package ffjsoninception
 
 import (
+	"github.com/empirefox/ffgen/ffgen"
 	fflib "github.com/pquerna/ffjson/fflib/v1"
 	"github.com/pquerna/ffjson/shared"
 
@@ -112,11 +113,11 @@ func foldFunc(key []byte) string {
 }
 
 type MarshalerFaster interface {
-	MarshalJSONBuf(buf fflib.EncodingBuffer) error
+	MarshalPermittedJSONBuf(buf fflib.EncodingBuffer, permitter ffgen.Permitter) error
 }
 
 type UnmarshalFaster interface {
-	UnmarshalJSONFFLexer(l *fflib.FFLexer, state fflib.FFParseState) error
+	UnmarshalPermittedJSONLexer(ffgen.PermitterValidator, *ffgen.Unmarshaled, *fflib.FFLexer, fflib.FFParseState) error
 }
 
 var marshalerType = reflect.TypeOf(new(json.Marshaler)).Elem()

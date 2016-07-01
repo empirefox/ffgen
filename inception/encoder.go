@@ -19,8 +19,9 @@ package ffjsoninception
 
 import (
 	"fmt"
-	"github.com/pquerna/ffjson/shared"
 	"reflect"
+
+	"github.com/pquerna/ffjson/shared"
 )
 
 func typeInInception(ic *Inception, typ reflect.Type, f shared.Feature) bool {
@@ -289,7 +290,7 @@ func getGetInnerValue(ic *Inception, name string, typ reflect.Type, ptr bool, fo
 				out += getField(ic, field, "")
 			}
 
-			if lastConditional(fields) {
+			if len(fields) > 0 {
 				out += ic.q.Flush()
 				out += `buf.Rewind(1)` + "\n"
 			} else {
@@ -430,8 +431,11 @@ func isIntish(t reflect.Type) bool {
 
 func getField(ic *Inception, f *StructField, prefix string) string {
 	out := ""
+	// TODO wrap this
+	out += ic.q.Flush()
+	out += "if permitter.IsPermitted(`" + f.Name + "`) {" + "\n"
+	flushed := false
 	if f.OmitEmpty {
-		out += ic.q.Flush()
 		if f.Pointer {
 			out += "if " + prefix + f.Name + " != nil {" + "\n"
 		}
@@ -456,6 +460,7 @@ func getField(ic *Inception, f *StructField, prefix string) string {
 		out += "} else {" + "\n"
 		out += t.WriteFlush("null")
 		out += "}" + "\n"
+		flushed = true
 	}
 
 	if f.OmitEmpty {
@@ -464,7 +469,13 @@ func getField(ic *Inception, f *StructField, prefix string) string {
 			out += "}" + "\n"
 		}
 		out += "}" + "\n"
+		flushed = true
 	}
+	// TODO wrap this
+	if !flushed {
+		out += ic.q.Flush()
+	}
+	out += `}` + "\n"
 	return out
 }
 
@@ -478,10 +489,11 @@ func lastConditional(fields []*StructField) bool {
 }
 
 func CreateMarshalJSON(ic *Inception, si *StructInfo) error {
-	conditionalWrites := lastConditional(si.Fields)
+	//	conditionalWrites := lastConditional(si.Fields)
 	out := ""
 
-	out += `func (mj *` + si.Name + `) MarshalJSON() ([]byte, error) {` + "\n"
+	// TODO modify MarshalPermittedJSON
+	out += `func (mj *` + si.Name + `) MarshalPermittedJSON(getter ffgen.PermitterGetter) ([]byte, error) {` + "\n"
 	out += `var buf fflib.Buffer` + "\n"
 
 	out += `if mj == nil {` + "\n"
@@ -489,19 +501,27 @@ func CreateMarshalJSON(ic *Inception, si *StructInfo) error {
 	out += "  return buf.Bytes(), nil" + "\n"
 	out += `}` + "\n"
 
-	out += `err := mj.MarshalJSONBuf(&buf)` + "\n"
+	out += `err := mj.MarshalPermittedJSONBuf(&buf, getter)` + "\n"
 	out += `if err != nil {` + "\n"
 	out += "  return nil, err" + "\n"
 	out += `}` + "\n"
 	out += `return buf.Bytes(), nil` + "\n"
 	out += `}` + "\n"
 
-	out += `func (mj *` + si.Name + `) MarshalJSONBuf(buf fflib.EncodingBuffer) (error) {` + "\n"
+	// TODO modify MarshalPermittedJSONBuf
+	out += `func (mj *` + si.Name + `) MarshalPermittedJSONBuf(buf fflib.EncodingBuffer, getter ffgen.PermitterGetter) (error) {` + "\n"
 	out += `  if mj == nil {` + "\n"
 	out += `    buf.WriteString("null")` + "\n"
 	out += "    return nil" + "\n"
 	out += `  }` + "\n"
 
+	out += `
+	permitter, hasPermitter := getter.GetPermitter(reflect.TypeOf(mj))
+	if !hasPermitter || !permitter.HasPermitted() {
+		buf.WriteString("null")
+		return nil
+	}
+`
 	out += `var err error` + "\n"
 	out += `var obj []byte` + "\n"
 	out += `_ = obj` + "\n"
@@ -512,9 +532,7 @@ func CreateMarshalJSON(ic *Inception, si *StructInfo) error {
 	// The extra space is inserted here.
 	// If nothing is written to the field this will be deleted
 	// instead of the last comma.
-	if conditionalWrites || len(si.Fields) == 0 {
-		ic.q.Write(" ")
-	}
+	ic.q.Write(" ")
 
 	for _, f := range si.Fields {
 		out += getField(ic, f, "mj.")
@@ -524,7 +542,7 @@ func CreateMarshalJSON(ic *Inception, si *StructInfo) error {
 	// If the last field has omitempty, conditionalWrites is set.
 	// If something has been written, we delete the last comma,
 	// by backing up the buffer, otherwise it will delete a space.
-	if conditionalWrites {
+	if len(si.Fields) > 0 {
 		out += ic.q.Flush()
 		out += `buf.Rewind(1)` + "\n"
 	} else {
